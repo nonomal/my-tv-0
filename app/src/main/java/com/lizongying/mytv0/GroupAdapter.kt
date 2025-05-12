@@ -1,6 +1,7 @@
 package com.lizongying.mytv0
 
 import android.content.Context
+import android.util.Log
 import android.view.KeyEvent
 import android.view.LayoutInflater
 import android.view.View
@@ -27,7 +28,9 @@ class GroupAdapter(
     private var defaultFocused = false
     private var defaultFocus: Int = -1
 
-    var visiable = false
+    var visible = false
+
+    private var first = true
 
     val application = context.applicationContext as MyTVApplication
 
@@ -63,9 +66,8 @@ class GroupAdapter(
     }
 
     override fun onBindViewHolder(viewHolder: ViewHolder, position: Int) {
-        val tvListModel = tvGroupModel.getTVListModel(position)!!
+        val listTVModel = tvGroupModel.getTVListModel(position)!!
         val view = viewHolder.itemView
-        view.tag = position
 
         if (!defaultFocused && position == defaultFocus) {
             view.requestFocus()
@@ -73,18 +75,29 @@ class GroupAdapter(
         }
 
         val onFocusChangeListener = View.OnFocusChangeListener { _, hasFocus ->
-            listener?.onItemFocusChange(tvListModel, hasFocus)
+            listener?.onItemFocusChange(listTVModel, hasFocus)
 
             if (hasFocus) {
                 viewHolder.focus(true)
                 focused = view
-                if (visiable) {
-                    if (position != tvGroupModel.position.value) {
-                        tvGroupModel.setPosition(position)
-                    }
-                } else {
-                    visiable = true
+
+                val p = listTVModel.getGroupIndex()
+                if (p != tvGroupModel.positionValue) {
+                    tvGroupModel.setPosition(p)
                 }
+
+//                if (visible) {
+//
+//                    // "position" should not be used here, as the "list" may have been filtered out.
+//                    val p = listTVModel.getGroupIndex()
+//                    Log.e(TAG, "group getGroupIndex $p")
+//                    Log.e(TAG, "group positionValue ${tvGroupModel.positionValue}")
+//                    if (p != tvGroupModel.positionValue) {
+//                        tvGroupModel.setPosition(p)
+//                    }
+//                } else {
+//                    visible = true
+//                }
             } else {
                 viewHolder.focus(false)
             }
@@ -102,13 +115,15 @@ class GroupAdapter(
                     val oldLikeMode = tvGroupModel.isInLikeMode;
                     tvGroupModel.isInLikeMode = position == 0
                     if (tvGroupModel.isInLikeMode) {
-                        R.string.favorite_mode.showToast()
+//                        R.string.favorite_mode.showToast()
                     } else if (oldLikeMode) {
-                        R.string.standard_mode.showToast()
+//                        R.string.standard_mode.showToast()
                     }
                 }, 500)
             }
             if (event?.action == KeyEvent.ACTION_DOWN) {
+
+                // If it is already the first item and you continue to move up...
                 if (keyCode == KeyEvent.KEYCODE_DPAD_UP && position == 0) {
                     val p = getItemCount() - 1
 
@@ -124,6 +139,7 @@ class GroupAdapter(
                     }, 0)
                 }
 
+                // If it is the last item and you continue to move down...
                 if (keyCode == KeyEvent.KEYCODE_DPAD_DOWN && position == getItemCount() - 1) {
                     val p = 0
 
@@ -144,7 +160,7 @@ class GroupAdapter(
             false
         }
 
-        viewHolder.bindTitle(tvListModel.getName())
+        viewHolder.bindTitle(listTVModel.getName())
     }
 
     override fun getItemCount() = tvGroupModel.size()
@@ -152,7 +168,11 @@ class GroupAdapter(
     class ViewHolder(private val context: Context, private val binding: GroupItemBinding) :
         RecyclerView.ViewHolder(binding.root) {
         fun bindTitle(text: String) {
-            binding.title.text = text
+            binding.title.text = when (text) {
+                "我的收藏" -> context.getString(R.string.my_favorites)
+                "全部頻道" -> context.getString(R.string.all_channels)
+                else -> text
+            }
         }
 
         fun focus(hasFocus: Boolean) {
@@ -162,30 +182,39 @@ class GroupAdapter(
                 binding.title.setTextColor(
                     ContextCompat.getColor(
                         context,
-                        R.color.description_blur
+                        R.color.title_blur
                     )
                 )
             }
         }
     }
 
-    fun toPosition(position: Int) {
-        recyclerView.post {
-            (recyclerView.layoutManager as? LinearLayoutManager)?.scrollToPositionWithOffset(
-                position,
+    fun scrollToPositionAndSelect(position: Int) {
+        val layoutManager = recyclerView.layoutManager as? LinearLayoutManager
+        layoutManager?.let {
+            val delay = if (first) {
+                100L
+            } else {
+                first = false
                 0
-            )
+            }
 
             recyclerView.postDelayed({
-                val viewHolder = recyclerView.findViewHolderForAdapterPosition(position)
-                viewHolder?.itemView?.isSelected = true
-                viewHolder?.itemView?.requestFocus()
-            }, 0)
+                val groupPosition =
+                    if (SP.showAllChannels || position == 0) position else position - 1
+                it.scrollToPositionWithOffset(groupPosition, 0)
+
+                val viewHolder = recyclerView.findViewHolderForAdapterPosition(groupPosition)
+                viewHolder?.itemView?.apply {
+                    isSelected = true
+                    requestFocus()
+                }
+            }, delay)
         }
     }
 
     interface ItemListener {
-        fun onItemFocusChange(tvListModel: TVListModel, hasFocus: Boolean)
+        fun onItemFocusChange(listTVModel: TVListModel, hasFocus: Boolean)
         fun onItemClicked(position: Int)
         fun onKey(keyCode: Int): Boolean
     }
@@ -194,15 +223,14 @@ class GroupAdapter(
         this.listener = listener
     }
 
-    fun update(tvGroupModel: TVGroupModel) {
-        this.tvGroupModel = tvGroupModel
+    fun changed() {
         recyclerView.post {
             notifyDataSetChanged()
         }
     }
 
     companion object {
-        private const val TAG = "CategoryAdapter"
+        private const val TAG = "GroupAdapter"
     }
 }
 

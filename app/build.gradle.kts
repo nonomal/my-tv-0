@@ -7,15 +7,14 @@ plugins {
 
 android {
     namespace = "com.lizongying.mytv0"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.lizongying.mytv0"
         minSdk = 21
-        targetSdk = 34
+        targetSdk = 35
         versionCode = getVersionCode()
         versionName = getVersionName()
-        multiDexEnabled = true
     }
 
     buildFeatures {
@@ -24,7 +23,7 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -33,7 +32,6 @@ android {
     }
     compileOptions {
         // Flag to enable support for the new language APIs
-
         // For AGP 4.1+
         isCoreLibraryDesugaringEnabled = true
 
@@ -45,31 +43,28 @@ android {
     }
 }
 
-fun getVersionCode(): Int {
+fun getTag(): String {
     return try {
         val process = Runtime.getRuntime().exec("git describe --tags --always")
         process.waitFor()
-        val arr = (process.inputStream.bufferedReader().use(BufferedReader::readText).trim()
-            .replace("v", "").replace(".", " ").replace("-", " ") + " 0").split(" ")
-        val versionCode =
-            arr[0].toInt() * 16777216 + arr[1].toInt() * 65536 + arr[2].toInt() * 256 + arr[3].toInt()
-        versionCode
-    } catch (ignored: Exception) {
+        process.inputStream.bufferedReader().use(BufferedReader::readText).trim().removePrefix("v")
+    } catch (_: Exception) {
+        ""
+    }
+}
+
+fun getVersionCode(): Int {
+    return try {
+        val arr = (getTag().replace(".", " ").replace("-", " ") + " 0").split(" ")
+        arr[0].toInt() * 16777216 + arr[1].toInt() * 65536 + arr[2].toInt() * 256 + arr[3].toInt()
+    } catch (_: Exception) {
         1
     }
 }
 
 fun getVersionName(): String {
-    return try {
-        val process = Runtime.getRuntime().exec("git describe --tags --always")
-        process.waitFor()
-        val versionName = process.inputStream.bufferedReader().use(BufferedReader::readText).trim()
-            .removePrefix("v")
-        versionName.ifEmpty {
-            "1.0.0"
-        }
-    } catch (ignored: Exception) {
-        "1.0.0"
+    return getTag().ifEmpty {
+        "0.0.0-1"
     }
 }
 
@@ -83,6 +78,7 @@ dependencies {
     implementation(libs.media3.exoplayer.dash)
     implementation(libs.media3.exoplayer.rtsp)
     implementation(libs.media3.datasource.okhttp)
+    implementation(libs.media3.datasource.rtmp)
 
     implementation(libs.nanohttpd)
     implementation(libs.gua64)
@@ -91,16 +87,14 @@ dependencies {
 
     implementation(libs.gson)
     implementation(libs.okhttp)
-    implementation(libs.converter.gson)
-    implementation(libs.retrofit)
 
     implementation(libs.core.ktx)
     implementation(libs.coroutines)
-    implementation(libs.leanback)
 
-    implementation(libs.multidex)
     implementation(libs.constraintlayout)
+    implementation(libs.appcompat)
     implementation(libs.recyclerview)
+    implementation(libs.lifecycle.viewmodel)
 
     implementation(files("libs/lib-decoder-ffmpeg-release.aar"))
 }

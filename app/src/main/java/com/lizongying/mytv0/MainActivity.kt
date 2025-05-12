@@ -1,6 +1,8 @@
 package com.lizongying.mytv0
 
+import MainViewModel
 import android.content.Context
+import android.content.res.Configuration
 import android.graphics.Color
 import android.media.AudioManager
 import android.os.Build
@@ -9,21 +11,25 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.GestureDetector
+import android.view.Gravity
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
-import android.widget.Toast
+import android.widget.PopupWindow
+import android.widget.RelativeLayout
+import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.fragment.app.Fragment
-import androidx.fragment.app.FragmentActivity
-import com.lizongying.mytv0.models.TVList
+import androidx.lifecycle.ViewModelProvider
+import com.lizongying.mytv0.databinding.SettingsWebBinding
 import java.util.Locale
+import kotlin.math.abs
 
 
-class MainActivity : FragmentActivity() {
+class MainActivity : AppCompatActivity() {
 
     private var ok = 0
     private var playerFragment = PlayerFragment()
@@ -34,6 +40,7 @@ class MainActivity : FragmentActivity() {
     private var timeFragment = TimeFragment()
     private var menuFragment = MenuFragment()
     private var settingFragment = SettingFragment()
+    private var programFragment = ProgramFragment()
 
     private val handler = Handler(Looper.myLooper()!!)
     private val delayHideMenu = 10 * 1000L
@@ -44,6 +51,10 @@ class MainActivity : FragmentActivity() {
     private lateinit var gestureDetector: GestureDetector
 
     private var server: SimpleServer? = null
+
+    private lateinit var viewModel: MainViewModel
+
+    private var isSafeToPerformFragmentTransactions = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -93,43 +104,34 @@ class MainActivity : FragmentActivity() {
 
         setContentView(R.layout.activity_main)
 
+        viewModel = ViewModelProvider(this)[MainViewModel::class.java]
+        viewModel.init(this)
+
         if (savedInstanceState == null) {
             supportFragmentManager.beginTransaction()
                 .add(R.id.main_browse_fragment, playerFragment)
-                .add(R.id.main_browse_fragment, errorFragment)
-                .add(R.id.main_browse_fragment, loadingFragment)
-                .add(R.id.main_browse_fragment, timeFragment)
                 .add(R.id.main_browse_fragment, infoFragment)
                 .add(R.id.main_browse_fragment, channelFragment)
-                .add(R.id.main_browse_fragment, menuFragment)
-                .add(R.id.main_browse_fragment, settingFragment)
-                .hide(menuFragment)
-                .hide(settingFragment)
-                .hide(errorFragment)
-                .hide(loadingFragment)
-                .hide(timeFragment)
-                .commitNow()
+                .commitNowAllowingStateLoss()
         }
-
-        gestureDetector = GestureDetector(this, GestureListener(this))
-
-        showTime()
     }
 
-    fun update() {
-        menuFragment.update()
+    fun updateMenuSize() {
+        menuFragment.updateSize()
     }
 
     fun ready(tag: String) {
         Log.i(TAG, "ready $tag")
         ok++
-        if (ok == 3) {
-            Log.i(TAG, "watch")
-            TVList.groupModel.change.observe(this) { _ ->
-                Log.i(TAG, "groupModel changed")
-                if (TVList.groupModel.tvGroupModel.value != null) {
+        if (ok == 2) {
+            Log.i(TAG, "all ready")
+
+            gestureDetector = GestureDetector(this, GestureListener(this))
+
+            viewModel.groupModel.change.observe(this) { _ ->
+                Log.i(TAG, "group changed")
+                if (viewModel.groupModel.tvGroup.value != null) {
                     watch()
-                    Log.i(TAG, "menuFragment update")
                     menuFragment.update()
                 }
             }
@@ -141,46 +143,94 @@ class MainActivity : FragmentActivity() {
 //                "播放收藏频道".showToast()
 //            }
 
-            if (SP.channel > 0) {
-                if (SP.channel < TVList.listModel.size) {
-                    TVList.setPosition(SP.channel - 1)
-                    R.string.play_default_channel.showToast()
-                } else {
-                    SP.channel = 0
-                    TVList.setPosition(0)
-                    R.string.default_channel_out_of_range.showToast()
-                }
-            } else {
-                if (!TVList.setPosition(SP.position)) {
-                    TVList.setPosition(0)
-                    R.string.last_channel_out_of_range.showToast()
-                } else {
-                    R.string.play_last_channel.showToast()
+            viewModel.channelsOk.observe(this) { it ->
+                if (it) {
+                    val prevGroup = viewModel.groupModel.positionValue
+                    val tvModel = if (SP.channel > 0) {
+                        val position = if (SP.channel < viewModel.listModel.size) {
+                            // R.string.play_default_channel.showToast()
+                            SP.channel - 1
+                        } else {
+                            // R.string.default_channel_out_of_range.showToast()
+                            SP.channel = 0
+                            0
+                        }
+                        Log.i(TAG, "播放默認頻道")
+                        viewModel.groupModel.getPosition(position)
+                    } else {
+//                if (SP.position < 0 || SP.position >= TVList.groupModel.getAllList()!!
+//                        .size()
+//                ) {
+//                    // R.string.last_channel_out_of_range.showToast()
+//                    0
+//                } else {
+//                    // R.string.play_last_channel.showToast()
+//                    SP.position
+//                }
+                        Log.i(TAG, "播放上次頻道")
+                        viewModel.groupModel.getCurrent()
+                    }
+                    viewModel.groupModel.setPositionPlaying()
+                    viewModel.groupModel.getCurrentList()
+                        ?.let {
+                            Log.i(TAG, "當前組 ${it.getName()}")
+                            it.setPositionPlaying()
+                        }
+                    tvModel?.setReady()
+
+                    val currentGroup = viewModel.groupModel.positionValue
+                    if (currentGroup != prevGroup) {
+                        Log.i(TAG, "group change")
+                        menuFragment.updateList(currentGroup)
+                    }
+
+                    viewModel.groupModel.isInLikeMode =
+                        SP.defaultLike && viewModel.groupModel.positionValue == 0
+                    if (viewModel.groupModel.isInLikeMode) {
+//                R.string.favorite_mode.showToast()
+                    } else {
+//                R.string.standard_mode.showToast()
+                    }
+
+                    // TODO group position
+                    viewModel.updateEPG()
                 }
             }
 
-            TVList.groupModel.isInLikeMode = SP.defaultLike;
-            if (TVList.groupModel.isInLikeMode) {
-                R.string.favorite_mode.showToast()
-            } else {
-                R.string.standard_mode.showToast()
+            Utils.isp.observe(this) {
+                val id = when (it) {
+//                    ISP.CHINA_MOBILE -> R.raw.mobile
+//                    ISP.IPV6->R.raw.ipv6
+                    else -> 0
+                }
+
+                if (id == 0) {
+                    return@observe
+                }
+
+                resources.openRawResource(id).bufferedReader()
+                    .use { i ->
+                        val channels = i.readText()
+                        if (channels.isNotEmpty()) {
+                            viewModel.tryStr2Channels(channels, null, "")
+                        } else {
+                            Log.w(TAG, "$it is empty")
+                        }
+                    }
             }
 
-            // TODO group position
+            server = SimpleServer(this, viewModel)
 
-            server = SimpleServer(this)
+            viewModel.updateConfig()
         }
     }
 
-    fun setServer(server: String) {
-        settingFragment.setServer(server)
-    }
-
     private fun watch() {
-        TVList.listModel.forEach { tvModel ->
+        viewModel.listModel.forEach { tvModel ->
             tvModel.errInfo.observe(this) { _ ->
+
                 if (tvModel.errInfo.value != null
-                    && tvModel.tv.id == TVList.position.value
+//                    && tvModel.tv.id == TVList.positionValue
                 ) {
                     hideFragment(loadingFragment)
                     if (tvModel.errInfo.value == "") {
@@ -200,9 +250,9 @@ class MainActivity : FragmentActivity() {
 
                 // not first time && channel is not changed
                 if (tvModel.ready.value != null
-                    && tvModel.tv.id == TVList.position.value
+//                    && tvModel.tv.id == TVList.positionValue
                 ) {
-                    Log.i(TAG, "loading ${tvModel.tv.title}")
+                    Log.i(TAG, "${tvModel.tv.title} 嘗試播放")
                     hideFragment(errorFragment)
                     showFragment(loadingFragment)
                     playerFragment.play(tvModel)
@@ -217,9 +267,10 @@ class MainActivity : FragmentActivity() {
                 if (tvModel.like.value != null && tvModel.tv.id != -1) {
                     val liked = tvModel.like.value as Boolean
                     if (liked) {
-                        TVList.groupModel.getTVListModel(0)?.replaceTVModel(tvModel)
+                        viewModel.groupModel.getFavoritesList()?.replaceTVModel(tvModel)
                     } else {
-                        TVList.groupModel.getTVListModel(0)?.removeTVModel(tvModel.tv.id)
+                        viewModel.groupModel.getFavoritesList()
+                            ?.removeTVModel(tvModel.tv.id)
                     }
                     SP.setLike(tvModel.tv.id, liked)
                 }
@@ -234,10 +285,23 @@ class MainActivity : FragmentActivity() {
         return super.onTouchEvent(event)
     }
 
-    private inner class GestureListener(private val context: Context) :
+    private inner class GestureListener(context: Context) :
         GestureDetector.SimpleOnGestureListener() {
 
-        private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        private var screenWidth = windowManager.defaultDisplay.width
+        private var screenHeight = windowManager.defaultDisplay.height
+        private val audioManager = context.getSystemService(AUDIO_SERVICE) as AudioManager
+
+        private var maxVolume = 0
+
+        init {
+            maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        }
+
+        override fun onDown(e: MotionEvent): Boolean {
+            playerFragment.hideVolumeNow()
+            return true
+        }
 
         override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
             showFragment(menuFragment)
@@ -250,7 +314,7 @@ class MainActivity : FragmentActivity() {
         }
 
         override fun onLongPress(e: MotionEvent) {
-            Log.i(TAG, "onLongPress")
+            showProgram()
         }
 
         override fun onFling(
@@ -259,16 +323,18 @@ class MainActivity : FragmentActivity() {
             velocityX: Float,
             velocityY: Float
         ): Boolean {
-            if ((e1?.x ?: 0f) > windowManager.defaultDisplay.width / 3
-                && (e1?.x ?: 0f) < windowManager.defaultDisplay.width * 2 / 3
-            ) {
+            val oldX = e1?.rawX ?: 0f
+            val oldY = e1?.rawY ?: 0f
+            val newX = e2.rawX
+            val newY = e2.rawY
+            if (oldX > screenWidth / 3 && oldX < screenWidth * 2 / 3 && abs(newX - oldX) < abs(newY - oldY)) {
                 if (velocityY > 0) {
-                    if (menuFragment.isHidden && settingFragment.isHidden) {
+                    if ((!menuFragment.isAdded || menuFragment.isHidden) && (!settingFragment.isAdded || settingFragment.isHidden)) {
                         prev()
                     }
                 }
                 if (velocityY < 0) {
-                    if (menuFragment.isHidden && settingFragment.isHidden) {
+                    if ((!menuFragment.isAdded || menuFragment.isHidden) && (!settingFragment.isAdded || settingFragment.isHidden)) {
                         next()
                     }
                 }
@@ -277,61 +343,88 @@ class MainActivity : FragmentActivity() {
             return super.onFling(e1, e2, velocityX, velocityY)
         }
 
-//        override fun onScroll(
-//            e1: MotionEvent?,
-//            e2: MotionEvent,
-//            distanceX: Float,
-//            distanceY: Float
-//        ): Boolean {
-//            val deltaY = e1?.y?.let { e2.y.minus(it) } ?: 0f
-//            val deltaX = e1?.x?.let { e2.x.minus(it) } ?: 0f
-//
-//            if (abs(deltaY) > abs(deltaX)) {
-//                if ((e1?.x ?: 0f) > windowManager.defaultDisplay.width * 2 / 3) {
-//                    adjustVolume(deltaY)
-//                }
-//            }
-//
-//            return super.onScroll(e1, e2, distanceX, distanceY)
-//        }
+        private var lastScrollTime: Long = 0
+        private var decayFactor: Float = 1.0f
 
-        private fun adjustVolume(deltaY: Float) {
-            val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-            val currentVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-            val deltaVolume = deltaY / 1000 * maxVolume / windowManager.defaultDisplay.height
+        override fun onScroll(
+            e1: MotionEvent?,
+            e2: MotionEvent,
+            distanceX: Float,
+            distanceY: Float
+        ): Boolean {
+            val oldX = e1?.rawX ?: 0f
+            val oldY = e1?.rawY ?: 0f
+            val newX = e2.rawX
+            val newY = e2.rawY
 
-            var newVolume = currentVolume + deltaVolume
-            if (newVolume < 0) {
-                newVolume = 0F
-            } else if (newVolume > maxVolume) {
-                newVolume = maxVolume.toFloat()
+            if (oldX < screenWidth / 3) {
+                val currentTime = System.currentTimeMillis()
+                val deltaTime = currentTime - lastScrollTime
+                lastScrollTime = currentTime
+
+                decayFactor =
+                    0.01f.coerceAtLeast(decayFactor - 0.03f * deltaTime)
+                val delta =
+                    ((oldY - newY) * decayFactor * 0.2 / screenHeight).toFloat()
+                adjustBrightness(delta)
+                decayFactor = 1.0f
+                return super.onScroll(e1, e2, distanceX, distanceY)
             }
 
-            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, newVolume.toInt(), 0)
+            if (oldX > screenWidth * 2 / 3 && abs(distanceY) > abs(distanceX)) {
+                val currentTime = System.currentTimeMillis()
+                val deltaTime = currentTime - lastScrollTime
+                lastScrollTime = currentTime
 
-            // 可以添加一个toast来显示当前音量
-            Toast.makeText(context, "Volume: $newVolume / $maxVolume", Toast.LENGTH_SHORT).show()
+                decayFactor =
+                    0.01f.coerceAtLeast(decayFactor - 0.03f * deltaTime)
+                val delta =
+                    ((oldY - newY) * maxVolume * decayFactor * 0.2 / screenHeight).toInt()
+                adjustVolume(delta)
+                decayFactor = 1.0f
+                return super.onScroll(e1, e2, distanceX, distanceY)
+            }
+
+            return super.onScroll(e1, e2, distanceX, distanceY)
         }
 
-//        private fun changeBrightness(deltaBrightness: Float) {
-//            brightness += deltaBrightness
-//            if (brightness < 0) {
-//                brightness = 0f
-//            } else if (brightness > 1) {
-//                brightness = 1f
-//            }
-//
-//            val layoutParams = windowManager.attributes
-//            layoutParams.screenBrightness = brightness
-//            windowManager.attributes = layoutParams
-//
-//            // 可以添加一个toast来显示当前亮度
-//            Toast.makeText(context, "Brightness: $brightness", Toast.LENGTH_SHORT).show()
-//        }
+        private fun adjustVolume(deltaVolume: Int) {
+            val currentVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+
+            var newVolume = currentVolume + deltaVolume
+
+            if (newVolume < 0) {
+                newVolume = 0
+            } else if (newVolume > maxVolume) {
+                newVolume = maxVolume
+            }
+
+            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, newVolume, 0)
+
+            playerFragment.setVolumeMax(maxVolume * 100)
+            playerFragment.setVolume(newVolume.toInt() * 100, true)
+            playerFragment.showVolume(View.VISIBLE)
+        }
+
+        private fun adjustBrightness(deltaBrightness: Float) {
+            var brightness = window.attributes.screenBrightness
+
+            brightness += deltaBrightness
+            brightness = 0.1f.coerceAtLeast(0.9f.coerceAtMost(brightness))
+
+            val attributes = window.attributes.apply {
+                screenBrightness = brightness
+            }
+            window.attributes = attributes
+
+            playerFragment.setVolumeMax(100)
+            playerFragment.setVolume((brightness * 100).toInt())
+            playerFragment.showVolume(View.VISIBLE)
+        }
     }
 
     fun onPlayEnd() {
-        val tvModel = TVList.getTVModel()
+        val tvModel = viewModel.groupModel.getCurrent()!!
         if (SP.repeatInfo) {
             infoFragment.show(tvModel)
             if (SP.channelNum) {
@@ -340,110 +433,99 @@ class MainActivity : FragmentActivity() {
         }
     }
 
-    fun play(position: Int) {
-        val prevGroup = TVList.getTVModel().groupIndex
-        if (position > -1 && position < TVList.size()) {
-            TVList.setPosition(position)
-            val currentGroup = TVList.getTVModel().groupIndex
+    fun play(position: Int): Boolean {
+        return if (position > -1 && position < viewModel.groupModel.getAllList()!!.size()) {
+            val prevGroup = viewModel.groupModel.positionValue
+            val tvModel = viewModel.groupModel.getPosition(position)
+
+            tvModel?.setReady()
+            viewModel.groupModel.setPositionPlaying()
+            viewModel.groupModel.getCurrentList()?.setPositionPlaying()
+
+            val currentGroup = viewModel.groupModel.positionValue
             if (currentGroup != prevGroup) {
-                Log.i(TAG, "group change")
                 menuFragment.updateList(currentGroup)
             }
+            true
         } else {
             R.string.channel_not_exist.showToast()
+            false
         }
     }
 
     fun prev() {
-        val prevGroup = TVList.getTVModel().groupIndex
-        var position = TVList.position.value?.dec() ?: 0
-
-        val currentId = TVList.getTVModel().tv.id
-        if (SP.defaultLike && TVList.groupModel.isInLikeMode) {
-            val likeList = TVList.groupModel.getTVListModel(0)
-            if (likeList != null) {
-                var oldPositionInList = -1;
-                for (i in 0 until likeList.size()) {
-                    val tvModel = likeList.getTVModel(i)
-                    if (tvModel != null && tvModel.tv.id == currentId) {
-                        oldPositionInList = i;
-                        break
-                    }
-                }
-                if (oldPositionInList != -1) {
-                    var newPos = oldPositionInList.dec()
-                    if (newPos < 0) {
-                        newPos = likeList.size() - 1
-                    }
-                    position = likeList.getTVModel(newPos)?.tv?.id ?: 0;
-                }
+        val prevGroup = viewModel.groupModel.positionValue
+        val tvModel =
+            if (SP.defaultLike && viewModel.groupModel.isInLikeMode && viewModel.groupModel.getFavoritesList() != null
+            ) {
+                viewModel.groupModel.getPrev(true)
+            } else {
+                viewModel.groupModel.getPrev()
             }
-        }
 
-        if (position == -1) {
-            position = TVList.size() - 1
-        }
-        TVList.setPosition(position)
-        val currentGroup = TVList.getTVModel().groupIndex
+        tvModel?.setReady()
+        viewModel.groupModel.setPositionPlaying()
+        viewModel.groupModel.getCurrentList()?.setPositionPlaying()
+
+        val currentGroup = viewModel.groupModel.positionValue
         if (currentGroup != prevGroup) {
-            Log.i(TAG, "group change")
             menuFragment.updateList(currentGroup)
         }
     }
 
     fun next() {
-        val prevGroup = TVList.getTVModel().groupIndex
-        var position = TVList.position.value?.inc() ?: 0
-        val currentId = TVList.getTVModel().tv.id
-        if (SP.defaultLike && TVList.groupModel.isInLikeMode) {
-            val likeList = TVList.groupModel.getTVListModel(0)
-            if (likeList != null) {
-                var oldPositionInList = -1;
-                for (i in 0 until likeList.size()) {
-                    val tvModel = likeList.getTVModel(i)
-                    if (tvModel != null && tvModel.tv.id == currentId) {
-                        oldPositionInList = i;
-                        break
-                    }
-                }
-                if (oldPositionInList != -1) {
-                    var newPos = oldPositionInList.inc()
-                    if (newPos >= likeList.size()) {
-                        newPos = 0
-                    }
-                    position = likeList.getTVModel(newPos)?.tv?.id ?: 0;
-                }
+        val prevGroup = viewModel.groupModel.positionValue
+        val tvModel =
+            if (SP.defaultLike && viewModel.groupModel.isInLikeMode && viewModel.groupModel.getFavoritesList() != null
+            ) {
+                viewModel.groupModel.getNext(true)
+            } else {
+                viewModel.groupModel.getNext()
             }
-        }
-        if (position == TVList.size()) {
-            position = 0
-        }
-        TVList.setPosition(position)
-        val currentGroup = TVList.getTVModel().groupIndex
+
+        tvModel?.setReady()
+        viewModel.groupModel.setPositionPlaying()
+        viewModel.groupModel.getCurrentList()?.setPositionPlaying()
+
+        val currentGroup = viewModel.groupModel.positionValue
         if (currentGroup != prevGroup) {
-            Log.i(TAG, "group change")
             menuFragment.updateList(currentGroup)
         }
     }
 
     private fun showFragment(fragment: Fragment) {
+        if (!isSafeToPerformFragmentTransactions) {
+            return
+        }
+
+        if (!fragment.isAdded) {
+            supportFragmentManager.beginTransaction()
+                .add(R.id.main_browse_fragment, fragment)
+                .commitAllowingStateLoss()
+            return
+        }
+
         if (!fragment.isHidden) {
             return
         }
 
         supportFragmentManager.beginTransaction()
             .show(fragment)
-            .commitNow()
+            .commitAllowingStateLoss()
     }
 
     private fun hideFragment(fragment: Fragment) {
-        if (fragment.isHidden) {
+        if (!isSafeToPerformFragmentTransactions) {
+            return
+        }
+
+        if (!fragment.isAdded || fragment.isHidden) {
             return
         }
 
         supportFragmentManager.beginTransaction()
             .hide(fragment)
-            .commitNow()
+            .commitAllowingStateLoss()
     }
 
     fun menuActive() {
@@ -454,9 +536,19 @@ class MainActivity : FragmentActivity() {
     private val hideMenu = Runnable {
         if (!isFinishing && !supportFragmentManager.isStateSaved) {
             if (!menuFragment.isHidden) {
-                supportFragmentManager.beginTransaction().hide(menuFragment).commit()
+                supportFragmentManager.beginTransaction()
+                    .hide(menuFragment)
+                    .commitAllowingStateLoss()
             }
         }
+    }
+
+    fun switchSoftDecode() {
+        if (!playerFragment.isAdded || playerFragment.isHidden) {
+            return
+        }
+
+        playerFragment.updatePlayer()
     }
 
     fun settingActive() {
@@ -465,21 +557,11 @@ class MainActivity : FragmentActivity() {
     }
 
     private val hideSetting = Runnable {
-        if (!isFinishing && !isDestroyed && !supportFragmentManager.isDestroyed) {
-            if (settingFragment.isAdded && !settingFragment.isHidden) {
-                try {
-                    supportFragmentManager.beginTransaction()
-                        .hide(settingFragment)
-                        .commitNow()
-                    showTime()
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
-            }
-        }
+        hideFragment(settingFragment)
+        showTimeFragment()
     }
 
-    fun showTime() {
+    fun showTimeFragment() {
         if (SP.time) {
             showFragment(timeFragment)
         } else {
@@ -487,7 +569,7 @@ class MainActivity : FragmentActivity() {
         }
     }
 
-    private fun showChannel(channel: String) {
+    private fun showChannel(channel: Int) {
         if (!menuFragment.isHidden) {
             return
         }
@@ -504,7 +586,11 @@ class MainActivity : FragmentActivity() {
 
 
     private fun channelUp() {
-        if (menuFragment.isHidden && settingFragment.isHidden) {
+        if (programFragment.isAdded && !programFragment.isHidden) {
+            return
+        }
+
+        if ((!menuFragment.isAdded || menuFragment.isHidden) && (!settingFragment.isAdded || settingFragment.isHidden)) {
             if (SP.channelReversal) {
                 next()
                 return
@@ -514,7 +600,11 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun channelDown() {
-        if (menuFragment.isHidden && settingFragment.isHidden) {
+        if (programFragment.isAdded && !programFragment.isHidden) {
+            return
+        }
+
+        if ((!menuFragment.isAdded || menuFragment.isHidden) && (!settingFragment.isAdded || settingFragment.isHidden)) {
             if (SP.channelReversal) {
                 prev()
                 return
@@ -524,13 +614,24 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun back() {
-        if (!menuFragment.isHidden) {
-            hideMenuFragment()
+        if (menuFragment.isAdded && !menuFragment.isHidden) {
+            hideFragment(menuFragment)
             return
         }
 
-        if (!settingFragment.isHidden) {
-            hideSettingFragment()
+        if (programFragment.isAdded && !programFragment.isHidden) {
+            hideFragment(programFragment)
+            return
+        }
+
+        if (settingFragment.isAdded && !settingFragment.isHidden) {
+            hideFragment(settingFragment)
+            showTimeFragment()
+            return
+        }
+
+        if (channelFragment.isAdded && channelFragment.isVisible) {
+            channelFragment.hideSelf()
             return
         }
 
@@ -548,79 +649,92 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun showSetting() {
-        if (!menuFragment.isHidden) {
+        if (programFragment.isAdded && !programFragment.isHidden) {
             return
         }
 
-        supportFragmentManager.beginTransaction()
-            .show(settingFragment)
-            .commit()
+        if (menuFragment.isAdded && !menuFragment.isHidden) {
+            return
+        }
+
+        showFragment(settingFragment)
+
         settingActive()
     }
 
-    fun hideMenuFragment() {
-        supportFragmentManager.beginTransaction()
-            .hide(menuFragment)
-            .commit()
+    private fun showProgram() {
+        if (menuFragment.isAdded && !menuFragment.isHidden) {
+            return
+        }
+
+        if (settingFragment.isAdded && !settingFragment.isHidden) {
+            return
+        }
+
+        viewModel.groupModel.getCurrent()?.let {
+            if (it.epgValue.isEmpty()) {
+                R.string.epg_is_empty.showToast()
+                return
+            }
+        }
+
+        showFragment(programFragment)
     }
 
-    private fun hideSettingFragment() {
-        supportFragmentManager.beginTransaction()
-            .hide(settingFragment)
-            .commit()
-        showTime()
+    private fun hideProgram(): Boolean {
+        if (!programFragment.isAdded || programFragment.isHidden) {
+            return false
+        }
+
+        hideFragment(programFragment)
+        return true
+    }
+
+    fun showWebViewPopup(url: String) {
+        val binding = SettingsWebBinding.inflate(layoutInflater)
+
+        val webView = binding.web
+        webView.settings.javaScriptEnabled = true
+        webView.isFocusableInTouchMode = true
+        webView.isFocusable = true
+        webView.loadUrl(url)
+
+        val popupWindow = PopupWindow(
+            binding.root,
+            RelativeLayout.LayoutParams.MATCH_PARENT,
+            RelativeLayout.LayoutParams.MATCH_PARENT
+        )
+
+        popupWindow.inputMethodMode = PopupWindow.INPUT_METHOD_NEEDED
+        popupWindow.isFocusable = true
+        popupWindow.isTouchable = true
+
+        popupWindow.isClippingEnabled = false
+
+        popupWindow.showAtLocation(window.decorView, Gravity.CENTER, 0, 0)
+
+        webView.requestFocus()
+
+        binding.close.setOnClickListener {
+            popupWindow.dismiss()
+        }
     }
 
     fun onKey(keyCode: Int): Boolean {
         Log.d(TAG, "keyCode $keyCode")
         when (keyCode) {
-            KeyEvent.KEYCODE_0 -> {
-                showChannel("0")
-                return true
-            }
-
-            KeyEvent.KEYCODE_1 -> {
-                showChannel("1")
-                return true
-            }
-
-            KeyEvent.KEYCODE_2 -> {
-                showChannel("2")
-                return true
-            }
-
-            KeyEvent.KEYCODE_3 -> {
-                showChannel("3")
-                return true
-            }
-
-            KeyEvent.KEYCODE_4 -> {
-                showChannel("4")
-                return true
-            }
-
-            KeyEvent.KEYCODE_5 -> {
-                showChannel("5")
-                return true
-            }
-
-            KeyEvent.KEYCODE_6 -> {
-                showChannel("6")
-                return true
-            }
-
-            KeyEvent.KEYCODE_7 -> {
-                showChannel("7")
-                return true
-            }
-
-            KeyEvent.KEYCODE_8 -> {
-                showChannel("8")
-                return true
-            }
-
-            KeyEvent.KEYCODE_9 -> {
-                showChannel("9")
+            KeyEvent.KEYCODE_0,
+            KeyEvent.KEYCODE_1,
+            KeyEvent.KEYCODE_2,
+            KeyEvent.KEYCODE_3,
+            KeyEvent.KEYCODE_4,
+            KeyEvent.KEYCODE_5,
+            KeyEvent.KEYCODE_6,
+            KeyEvent.KEYCODE_7,
+            KeyEvent.KEYCODE_8,
+            KeyEvent.KEYCODE_9,
+                -> {
+                showChannel(keyCode - 7)
                 return true
             }
 
@@ -660,10 +774,20 @@ class MainActivity : FragmentActivity() {
             }
 
             KeyEvent.KEYCODE_ENTER -> {
+                if (channelFragment.isAdded && channelFragment.isVisible) {
+                    channelFragment.playNow()
+                    return true
+                }
+
                 showFragment(menuFragment)
             }
 
             KeyEvent.KEYCODE_DPAD_CENTER -> {
+                if (channelFragment.isAdded && channelFragment.isVisible) {
+                    channelFragment.playNow()
+                    return true
+                }
+
                 showFragment(menuFragment)
             }
 
@@ -684,14 +808,11 @@ class MainActivity : FragmentActivity() {
             }
 
             KeyEvent.KEYCODE_DPAD_LEFT -> {
-                if (settingFragment.isHidden) {
-                    showFragment(menuFragment)
-                }
+                showProgram()
             }
 
             KeyEvent.KEYCODE_DPAD_RIGHT -> {
                 showSetting()
-//                return true
             }
         }
         return false
@@ -705,17 +826,42 @@ class MainActivity : FragmentActivity() {
         return super.onKeyDown(keyCode, event)
     }
 
+    override fun onResume() {
+        super.onResume()
+
+        isSafeToPerformFragmentTransactions = true
+
+        showTimeFragment()
+    }
+
+    override fun onPause() {
+        super.onPause()
+
+        isSafeToPerformFragmentTransactions = false
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         server?.stop()
     }
 
     override fun attachBaseContext(base: Context) {
-        //Locale.SIMPLIFIED_CHINESE
-        //Locale.TRADITIONAL_CHINESE
-        val locale = Locale.TRADITIONAL_CHINESE
-        val context = LocaleContextWrapper.wrap(base, locale)
-        super.attachBaseContext(context)
+        try {
+            val locale = Locale.TRADITIONAL_CHINESE
+            val config = Configuration()
+            config.setLocale(locale)
+            super.attachBaseContext(
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N_MR1) {
+                    base.createConfigurationContext(config)
+                } else {
+                    val resources = base.resources
+                    resources.updateConfiguration(config, resources.displayMetrics)
+                    base
+                }
+            )
+        } catch (_: Exception) {
+            super.attachBaseContext(base)
+        }
     }
 
     companion object {

@@ -1,17 +1,18 @@
 package com.lizongying.mytv0
 
+import android.app.Application
 import android.content.Context
+import android.content.res.Configuration
 import android.content.res.Resources
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.DisplayMetrics
 import android.view.WindowManager
 import android.widget.Toast
-import androidx.multidex.MultiDex
-import androidx.multidex.MultiDexApplication
 import java.util.Locale
 
-class MyTVApplication : MultiDexApplication() {
+class MyTVApplication : Application() {
 
     companion object {
         private const val TAG = "MyTVApplication"
@@ -33,6 +34,8 @@ class MyTVApplication : MultiDexApplication() {
     private var ratio = 1.0
     private var density = 2.0f
     private var scale = 1.0f
+
+    lateinit var imageHelper:ImageHelper
 
     override fun onCreate() {
         super.onCreate()
@@ -64,6 +67,10 @@ class MyTVApplication : MultiDexApplication() {
             shouldHeight = height
             shouldWidth = (height * 16.0 / 9.0).toInt()
         }
+
+        Thread.setDefaultUncaughtExceptionHandler(MyTVExceptionHandler(this))
+
+        imageHelper = ImageHelper(this)
     }
 
     fun getDisplayMetrics(): DisplayMetrics {
@@ -101,12 +108,21 @@ class MyTVApplication : MultiDexApplication() {
     }
 
     override fun attachBaseContext(base: Context) {
-        //Locale.SIMPLIFIED_CHINESE
-        //Locale.TRADITIONAL_CHINESE
-        val locale = Locale.TRADITIONAL_CHINESE
-        val context = LocaleContextWrapper.wrap(base, locale)
-        super.attachBaseContext(context)
-
-        MultiDex.install(this)
+        try {
+            val locale = Locale.TRADITIONAL_CHINESE
+            val config = Configuration()
+            config.setLocale(locale)
+            super.attachBaseContext(
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N_MR1) {
+                    base.createConfigurationContext(config)
+                } else {
+                    val resources = base.resources
+                    resources.updateConfiguration(config, resources.displayMetrics)
+                    base
+                }
+            )
+        } catch (_: Exception) {
+            super.attachBaseContext(base)
+        }
     }
 }

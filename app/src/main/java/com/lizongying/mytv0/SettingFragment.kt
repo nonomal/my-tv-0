@@ -1,10 +1,15 @@
 package com.lizongying.mytv0
 
+import MainViewModel
+import MainViewModel.Companion.CACHE_FILE_NAME
 import android.Manifest
+import android.content.Context
 import android.content.pm.PackageManager
+import android.graphics.drawable.ColorDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -14,8 +19,10 @@ import androidx.core.view.marginBottom
 import androidx.core.view.marginEnd
 import androidx.core.view.marginTop
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.ViewModelProvider
+import com.lizongying.mytv0.ModalFragment.Companion.KEY_URL
+import com.lizongying.mytv0.SimpleServer.Companion.PORT
 import com.lizongying.mytv0.databinding.SettingBinding
-import com.lizongying.mytv0.models.TVList
 import kotlin.math.max
 import kotlin.math.min
 
@@ -29,7 +36,9 @@ class SettingFragment : Fragment() {
 
     private lateinit var updateManager: UpdateManager
 
-    private var server = ""
+    private var server = "http://${PortUtil.lan()}:$PORT"
+
+    private lateinit var viewModel: MainViewModel
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -96,19 +105,30 @@ class SettingFragment : Fragment() {
 
         val switchShowAllChannels = _binding?.switchShowAllChannels
         switchShowAllChannels?.isChecked = SP.showAllChannels
-        switchShowAllChannels?.setOnCheckedChangeListener { _, isChecked ->
-            SP.showAllChannels = isChecked
-            TVList.groupModel.tvGroupModel.value?.let { TVList.groupModel.setTVListModelList(it) }
-            mainActivity.update()
+
+        val switchCompactMenu = _binding?.switchCompactMenu
+        switchCompactMenu?.isChecked = SP.compactMenu
+        switchCompactMenu?.setOnCheckedChangeListener { _, isChecked ->
+            SP.compactMenu = isChecked
+            mainActivity.updateMenuSize()
             mainActivity.settingActive()
         }
 
-        binding.qrcode.setOnClickListener {
+        val switchDisplaySeconds = _binding?.switchDisplaySeconds
+        switchDisplaySeconds?.isChecked = SP.displaySeconds
+
+        val switchSoftDecode = _binding?.switchSoftDecode
+        switchSoftDecode?.isChecked = SP.softDecode
+        switchSoftDecode?.setOnCheckedChangeListener { _, isChecked ->
+            SP.softDecode = isChecked
+            mainActivity.switchSoftDecode()
+            mainActivity.settingActive()
+        }
+
+        binding.remoteSettings.setOnClickListener {
             val imageModalFragment = ModalFragment()
-            val size = Utils.dpToPx(200)
-            val img = QrCodeUtil().createQRCodeBitmap(server, size, size)
             val args = Bundle()
-            args.putParcelable("bitmap", img);
+            args.putString(KEY_URL, server)
             imageModalFragment.arguments = args
 
             imageModalFragment.show(requireFragmentManager(), ModalFragment.TAG)
@@ -121,21 +141,10 @@ class SettingFragment : Fragment() {
         }
 
         binding.confirmConfig.setOnClickListener {
-            confirmConfig()
-        }
+            val sourcesFragment = SourcesFragment()
 
-        binding.clear.setOnClickListener {
-            SP.config = SP.DEFAULT_CONFIG_URL
-            confirmConfig()
-            SP.channel = SP.DEFAULT_CHANNEL
-            confirmChannel()
-            context.deleteFile(TVList.FILE_NAME)
-            SP.deleteLike()
-            SP.position = 0
-            TVList.setPosition(0)
-            SP.showAllChannels = SP.DEFAULT_SHOW_ALL_CHANNELS
-
-            R.string.config_restored.showToast()
+            sourcesFragment.show(requireFragmentManager(), SourcesFragment.TAG)
+            mainActivity.settingActive()
         }
 
         binding.appreciate.setOnClickListener {
@@ -157,6 +166,9 @@ class SettingFragment : Fragment() {
             requireActivity().finishAffinity()
         }
 
+        val txtTextSize =
+            application.px2PxFont(binding.versionName.textSize)
+
         binding.content.layoutParams.width =
             application.px2Px(binding.content.layoutParams.width)
         binding.content.setPadding(
@@ -167,7 +179,7 @@ class SettingFragment : Fragment() {
         )
 
         binding.name.textSize = application.px2PxFont(binding.name.textSize)
-        binding.version.textSize = application.px2PxFont(binding.version.textSize)
+        binding.version.textSize = txtTextSize
         val layoutParamsVersion = binding.version.layoutParams as ViewGroup.MarginLayoutParams
         layoutParamsVersion.topMargin = application.px2Px(binding.version.marginTop)
         layoutParamsVersion.bottomMargin = application.px2Px(binding.version.marginBottom)
@@ -175,96 +187,192 @@ class SettingFragment : Fragment() {
 
         val btnWidth =
             application.px2Px(binding.confirmConfig.layoutParams.width)
-        val btnHeight =
-            application.px2Px(binding.confirmConfig.layoutParams.height)
-        val btnTextSize =
-            application.px2PxFont(binding.confirmConfig.textSize)
+
         val btnLayoutParams =
             binding.confirmConfig.layoutParams as ViewGroup.MarginLayoutParams
         btnLayoutParams.marginEnd = application.px2Px(binding.confirmConfig.marginEnd)
 
-        val txtWidth =
-            application.px2Px(binding.versionName.layoutParams.width)
-        val txtTextSize =
-            application.px2PxFont(binding.versionName.textSize)
-
-        binding.checkVersion.layoutParams.width = btnWidth
-        binding.checkVersion.layoutParams.height = btnHeight
-        binding.checkVersion.textSize = btnTextSize
-        binding.checkVersion.layoutParams = btnLayoutParams
-
-        binding.versionName.layoutParams.width = txtWidth
         binding.versionName.textSize = txtTextSize
 
-        binding.qrcode.layoutParams.width = btnWidth
-        binding.qrcode.layoutParams.height = btnHeight
-        binding.qrcode.textSize = btnTextSize
-        binding.qrcode.layoutParams = btnLayoutParams
+        for (i in listOf(
+            binding.remoteSettings,
+            binding.confirmConfig,
+            binding.clear,
+            binding.checkVersion,
+            binding.exit,
+            binding.appreciate,
+        )) {
+            i.layoutParams.width = btnWidth
+            i.textSize = txtTextSize
+            i.layoutParams = btnLayoutParams
+            i.setOnFocusChangeListener { _, hasFocus ->
+                if (hasFocus) {
+                    i.background = ColorDrawable(
+                        ContextCompat.getColor(
+                            context,
+                            R.color.focus
+                        )
+                    )
+                    i.setTextColor(
+                        ContextCompat.getColor(
+                            context,
+                            R.color.white
+                        )
+                    )
+                } else {
+                    i.background = ColorDrawable(
+                        ContextCompat.getColor(
+                            context,
+                            R.color.description_blur
+                        )
+                    )
+                    i.setTextColor(
+                        ContextCompat.getColor(
+                            context,
+                            R.color.blur
+                        )
+                    )
+                }
+            }
+        }
 
-        binding.confirmConfig.layoutParams.width = btnWidth
-        binding.confirmConfig.layoutParams.height = btnHeight
-        binding.confirmConfig.textSize = btnTextSize
-        binding.confirmConfig.layoutParams = btnLayoutParams
+        val textSizeSwitch = application.px2PxFont(binding.switchChannelReversal.textSize)
 
-        binding.clear.layoutParams.width = btnWidth
-        binding.clear.layoutParams.height = btnHeight
-        binding.clear.textSize = btnTextSize
-        binding.clear.layoutParams = btnLayoutParams
-
-        binding.appreciate.layoutParams.width = btnWidth
-        binding.appreciate.layoutParams.height = btnHeight
-        binding.appreciate.textSize = btnTextSize
-        binding.appreciate.layoutParams = btnLayoutParams
-
-        binding.exit.layoutParams.width = btnWidth
-        binding.exit.layoutParams.height = btnHeight
-        binding.exit.textSize = btnTextSize
-        binding.exit.layoutParams = btnLayoutParams
-
-        val textSize = application.px2PxFont(binding.switchChannelReversal.textSize)
-
-        val layoutParamsChannelReversal =
+        val layoutParamsSwitch =
             binding.switchChannelReversal.layoutParams as ViewGroup.MarginLayoutParams
-        layoutParamsChannelReversal.topMargin =
+        layoutParamsSwitch.topMargin =
             application.px2Px(binding.switchChannelReversal.marginTop)
 
-        binding.switchChannelReversal.textSize = textSize
-        binding.switchChannelReversal.layoutParams = layoutParamsChannelReversal
-
-        binding.switchChannelNum.textSize = textSize
-        binding.switchChannelNum.layoutParams = layoutParamsChannelReversal
-
-        binding.switchTime.textSize = textSize
-        binding.switchTime.layoutParams = layoutParamsChannelReversal
-
-        binding.switchBootStartup.textSize = textSize
-        binding.switchBootStartup.layoutParams = layoutParamsChannelReversal
-
-        binding.switchRepeatInfo.textSize = textSize
-        binding.switchRepeatInfo.layoutParams = layoutParamsChannelReversal
-
-        binding.switchConfigAutoLoad.textSize = textSize
-        binding.switchConfigAutoLoad.layoutParams = layoutParamsChannelReversal
-
-        binding.switchDefaultLike.textSize = textSize
-        binding.switchDefaultLike.layoutParams = layoutParamsChannelReversal
-
-        binding.switchShowAllChannels.textSize = textSize
-        binding.switchShowAllChannels.layoutParams = layoutParamsChannelReversal
+        for (i in listOf(
+            binding.switchChannelReversal,
+            binding.switchChannelNum,
+            binding.switchTime,
+            binding.switchBootStartup,
+            binding.switchRepeatInfo,
+            binding.switchConfigAutoLoad,
+            binding.switchDefaultLike,
+            binding.switchShowAllChannels,
+            binding.switchCompactMenu,
+            binding.switchDisplaySeconds,
+            binding.switchSoftDecode,
+        )) {
+            i.textSize = textSizeSwitch
+            i.layoutParams = layoutParamsSwitch
+            i.setOnFocusChangeListener { _, hasFocus ->
+                if (hasFocus) {
+                    i.setTextColor(
+                        ContextCompat.getColor(
+                            context,
+                            R.color.focus
+                        )
+                    )
+                } else {
+                    i.setTextColor(
+                        ContextCompat.getColor(
+                            context,
+                            R.color.title_blur
+                        )
+                    )
+                }
+            }
+        }
 
         updateManager = UpdateManager(context, context.appVersionCode)
 
         return binding.root
     }
 
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+
+        val context = requireActivity()
+        val mainActivity = (activity as MainActivity)
+        val application = context.applicationContext as MyTVApplication
+        val imageHelper = application.imageHelper
+
+        viewModel = ViewModelProvider(context)[MainViewModel::class.java]
+
+        binding.switchDisplaySeconds.setOnCheckedChangeListener { _, isChecked ->
+            viewModel.setDisplaySeconds(isChecked)
+        }
+
+        binding.clear.setOnClickListener {
+            SP.channelNum = SP.DEFAULT_CHANNEL_NUM
+
+            SP.sources = SP.DEFAULT_SOURCES
+            Log.i(TAG, "DEFAULT_SOURCES ${SP.DEFAULT_SOURCES}")
+            viewModel.sources.init()
+
+            SP.channelReversal = SP.DEFAULT_CHANNEL_REVERSAL
+            SP.time = SP.DEFAULT_TIME
+            SP.bootStartup = SP.DEFAULT_BOOT_STARTUP
+            SP.repeatInfo = SP.DEFAULT_REPEAT_INFO
+            SP.configAutoLoad = SP.DEFAULT_CONFIG_AUTO_LOAD
+            SP.proxy = SP.DEFAULT_PROXY
+
+            imageHelper.clearImage()
+
+            // TODO update player
+            SP.softDecode = SP.DEFAULT_SOFT_DECODE
+
+            SP.configUrl = SP.DEFAULT_CONFIG_URL
+            Log.i(TAG, "config url: ${SP.configUrl}")
+            context.deleteFile(CACHE_FILE_NAME)
+            viewModel.reset(context)
+            confirmConfig()
+
+            SP.channel = SP.DEFAULT_CHANNEL
+            Log.i(TAG, "default channel: ${SP.channel}")
+            confirmChannel()
+
+            SP.deleteLike()
+            Log.i(TAG, "clear like")
+
+//            SP.positionGroup = SP.DEFAULT_POSITION_GROUP
+//            viewModel.groupModel.setPosition(SP.DEFAULT_POSITION_GROUP)
+//            viewModel.groupModel.setPositionPlaying(SP.DEFAULT_POSITION_GROUP)
+
+            SP.positionGroup = viewModel.groupModel.defaultPosition()
+            viewModel.groupModel.initPosition()
+
+            SP.position = SP.DEFAULT_POSITION
+            Log.i(TAG, "list position: ${SP.position}")
+            val tvListModel = viewModel.groupModel.getCurrentList()
+            tvListModel?.setPosition(SP.DEFAULT_POSITION)
+            tvListModel?.setPositionPlaying(SP.DEFAULT_POSITION)
+
+            viewModel.groupModel.setPositionPlaying()
+            viewModel.groupModel.getCurrentList()?.setPositionPlaying()
+            viewModel.groupModel.getCurrent()?.setReady()
+
+            SP.showAllChannels = SP.DEFAULT_SHOW_ALL_CHANNELS
+            SP.compactMenu = SP.DEFAULT_COMPACT_MENU
+
+            viewModel.setDisplaySeconds(SP.DEFAULT_DISPLAY_SECONDS)
+
+            SP.epg = SP.DEFAULT_EPG
+            viewModel.updateEPG()
+
+            R.string.config_restored.showToast()
+        }
+
+        binding.switchShowAllChannels.setOnCheckedChangeListener { _, isChecked ->
+            SP.showAllChannels = isChecked
+            viewModel.groupModel.setChange()
+
+            mainActivity.settingActive()
+        }
+
+        binding.remoteSettings.requestFocus()
+    }
+
     private fun confirmConfig() {
-        if (SP.config == null) {
+        if (SP.configUrl.isNullOrEmpty()) {
+            Log.w(TAG, "SP.configUrl is null or empty")
             return
         }
 
-        var url = SP.config!!
-        url = Utils.formatUrl(url)
-        uri = Uri.parse(url)
+        uri = Uri.parse(Utils.formatUrl(SP.configUrl!!))
         if (uri.scheme == "") {
             uri = uri.buildUpon().scheme("http").build()
         }
@@ -272,7 +380,7 @@ class SettingFragment : Fragment() {
             if (uri.scheme == "file") {
                 requestReadPermissions()
             } else {
-                TVList.parseUri(uri)
+                viewModel.importFromUri(uri)
             }
         } else {
             R.string.invalid_config_address.showToast()
@@ -281,62 +389,49 @@ class SettingFragment : Fragment() {
     }
 
     private fun confirmChannel() {
-        SP.channel = min(max(SP.channel, 1), TVList.listModel.size)
+        SP.channel =
+            min(max(SP.channel, 0), viewModel.groupModel.getAllList()!!.size())
 
         (activity as MainActivity).settingActive()
-    }
-
-    fun setServer(server: String) {
-        this.server = "http://$server"
-    }
-
-    fun setVersionName(versionName: String) {
-        binding.versionName.text = versionName
     }
 
     private fun hideSelf() {
         requireActivity().supportFragmentManager.beginTransaction()
             .hide(this)
-            .commit()
-        (activity as MainActivity).showTime()
+            .commitAllowingStateLoss()
+        (activity as MainActivity).showTimeFragment()
     }
 
     override fun onHiddenChanged(hidden: Boolean) {
         super.onHiddenChanged(hidden)
-        if (!hidden) {
+        if (_binding != null && !hidden) {
+            binding.remoteSettings.requestFocus()
+        }
+    }
+
+    private fun checkAndAddPermission(context: Context, permission: String, permissionsList: MutableList<String>) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+            ContextCompat.checkSelfPermission(context, permission) != PackageManager.PERMISSION_GRANTED) {
+            permissionsList.add(permission)
         }
     }
 
     private fun requestInstallPermissions() {
         val context = requireContext()
-        val permissionsList: MutableList<String> = ArrayList()
+        val permissionsList = mutableListOf<String>()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !context.packageManager.canRequestPackageInstalls()) {
             permissionsList.add(Manifest.permission.REQUEST_INSTALL_PACKAGES)
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
-            ContextCompat.checkSelfPermission(
-                context,
-                Manifest.permission.READ_EXTERNAL_STORAGE
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
-            permissionsList.add(Manifest.permission.READ_EXTERNAL_STORAGE)
-        }
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
-            ContextCompat.checkSelfPermission(
-                context,
-                Manifest.permission.WRITE_EXTERNAL_STORAGE
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
-            permissionsList.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
-        }
+        checkAndAddPermission(context, Manifest.permission.READ_EXTERNAL_STORAGE, permissionsList)
+        checkAndAddPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE, permissionsList)
 
         if (permissionsList.isNotEmpty()) {
+            Log.i(TAG, "ask $permissionsList")
             ActivityCompat.requestPermissions(
                 requireActivity(),
-                permissionsList.toTypedArray<String>(),
+                permissionsList.toTypedArray(),
                 PERMISSIONS_REQUEST_CODE
             )
         } else {
@@ -346,25 +441,18 @@ class SettingFragment : Fragment() {
 
     private fun requestReadPermissions() {
         val context = requireContext()
-        val permissionsList: MutableList<String> = ArrayList()
+        val permissionsList = mutableListOf<String>()
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
-            ContextCompat.checkSelfPermission(
-                context,
-                Manifest.permission.READ_EXTERNAL_STORAGE
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
-            permissionsList.add(Manifest.permission.READ_EXTERNAL_STORAGE)
-        }
+        checkAndAddPermission(context, Manifest.permission.READ_EXTERNAL_STORAGE, permissionsList)
 
         if (permissionsList.isNotEmpty()) {
             ActivityCompat.requestPermissions(
                 requireActivity(),
-                permissionsList.toTypedArray<String>(),
+                permissionsList.toTypedArray(),
                 PERMISSIONS_REQUEST_CODE
             )
         } else {
-            TVList.parseUri(uri)
+            viewModel.importFromUri(uri)
         }
     }
 
@@ -376,7 +464,7 @@ class SettingFragment : Fragment() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == PERMISSION_READ_EXTERNAL_STORAGE_REQUEST_CODE) {
             if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                TVList.parseUri(uri)
+                viewModel.importFromUri(uri)
             } else {
                 R.string.authorization_failed.showToast()
             }
@@ -392,6 +480,7 @@ class SettingFragment : Fragment() {
             if (allPermissionsGranted) {
                 updateManager.checkAndUpdate()
             } else {
+                Log.w(TAG, "ask permissions failed")
                 R.string.authorization_failed.showToast()
             }
         }

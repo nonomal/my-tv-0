@@ -5,11 +5,11 @@
     <string name="check_version">Check for Updates</string>
     <string name="title_boot_startup">Boot Startup</string>
     <string name="appreciate">Appreciate Author</string>
-    <string name="channels">Apply Configuration</string>
+    <string name="channels">Change Source</string>
     <string name="channel">Default Channel</string>
     <string name="title_repeat_info">Show Video Info During Loop Playback</string>
     <string name="title_time">Show Time</string>
-    <string name="title_config_auto_load">Auto Update Video Source on App Startup</string>
+    <string name="title_config_auto_load">Update Video Source on App Startup</string>
     <string name="exit">Exit Application</string>
     <string name="default_channel">Default Channel Number</string>
     <string name="clear">Restore Default</string>
@@ -24,6 +24,7 @@
     <string name="channel_format_error">Channel format error</string>
     <string name="channel_read_error">Unable to read channel</string>
     <string name="channel_request_error">Channel request error</string>
+    <string name="play_error">Play error</string>
     <string name="file_not_exist">File does not exist</string>
     <string name="channel_not_exist">Channel does not exist</string>
     <string name="config_restored">Configuration restored to default</string>
@@ -41,4 +42,15 @@
     <string name="default_channel_set_failure">Failed to set default channel</string>
     <string name="default_proxy_set_success">Proxy set successfully</string>
     <string name="default_proxy_set_failure">Failed to set proxy</string>
+    <string name="default_epg_set_success">EPG set successfully</string>
+    <string name="default_epg_set_failure">Failed to set EPG</string>
+    <string name="start_config_channel">Start import channel</string>
+    <string name="start_set_default_channel">Start setting default channel</string>
+    <string name="my_favorites">My Favorites</string>
+    <string name="all_channels">All Channels</string>
+    <string name="compact_menu">Compact Menu</string>
+    <string name="display_seconds">Display Seconds</string>
+    <string name="no_video_source">No Video Source</string>
+    <string name="soft_decode">Soft Decode</string>
+    <string name="epg_is_empty">EPG is empty</string>
 </resources>

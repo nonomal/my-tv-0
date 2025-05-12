@@ -3,9 +3,9 @@ package com.lizongying.mytv0
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
-import android.graphics.drawable.BitmapDrawable
 import android.os.Bundle
 import android.os.Handler
+import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -14,7 +14,6 @@ import androidx.core.view.marginBottom
 import androidx.core.view.marginStart
 import androidx.core.view.marginTop
 import androidx.fragment.app.Fragment
-import com.bumptech.glide.Glide
 import com.lizongying.mytv0.databinding.InfoBinding
 import com.lizongying.mytv0.models.TVModel
 
@@ -24,14 +23,13 @@ class InfoFragment : Fragment() {
     private val binding get() = _binding!!
 
     private val handler = Handler()
-    private val delay: Long = 3000
+    private val delay: Long = 5000
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
         savedInstanceState: Bundle?
     ): View {
         _binding = InfoBinding.inflate(inflater, container, false)
-
 
         val application = requireActivity().applicationContext as MyTVApplication
 
@@ -67,50 +65,60 @@ class InfoFragment : Fragment() {
         return binding.root
     }
 
-    fun show(tvViewModel: TVModel) {
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+        (activity as MainActivity).ready(TAG)
+    }
+
+    fun show(tvModel: TVModel) {
+        // TODO make sure attached
+        if (!isAdded) {
+            Log.e(TAG, "Fragment not attached to a context.")
+            return
+        }
+
+        val tv = tvModel.tv
+
         val context = requireContext()
-        binding.title.text = tvViewModel.tv.title
+        val application = context.applicationContext as MyTVApplication
+        val imageHelper = application.imageHelper
 
-        when (tvViewModel.tv.title) {
+        binding.title.text = tv.title
+
+        when (tv.title) {
             else -> {
-                if (tvViewModel.tv.logo.isNullOrBlank()) {
-                    val width = Utils.dpToPx(100)
-                    val height = Utils.dpToPx(60)
-                    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-                    val canvas = Canvas(bitmap)
+                val width = 300
+                val height = 180
+                val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                val canvas = Canvas(bitmap)
 
-                    val text = "${tvViewModel.tv.id + 1}"
-                    var size = 100f
-                    if (tvViewModel.tv.id > 999) {
-                        size = 90f
-                    }
-                    val paint = Paint().apply {
-                        color = ContextCompat.getColor(context, R.color.blur)
-                        textSize = size
-                        textAlign = Paint.Align.CENTER
-                    }
-                    val x = width / 2f
-                    val y = height / 2f - (paint.descent() + paint.ascent()) / 2
-                    canvas.drawText(text, x, y, paint)
-
-                    Glide.with(this)
-                        .load(BitmapDrawable(context.resources, bitmap))
-//                        .centerInside()
-                        .into(binding.logo)
-                } else {
-                    Glide.with(this)
-                        .load(tvViewModel.tv.logo)
-//                        .centerInside()
-                        .into(binding.logo)
+                val channelNum = if (tv.number == -1) tv.id.plus(1) else tv.number
+                var size = 150f
+                if (channelNum > 99) {
+                    size = 100f
                 }
+                if (channelNum > 999) {
+                    size = 75f
+                }
+                val paint = Paint().apply {
+                    color = ContextCompat.getColor(context, R.color.title_blur)
+                    textSize = size
+                    textAlign = Paint.Align.CENTER
+                }
+                val x = width / 2f
+                val y = height / 2f - (paint.descent() + paint.ascent()) / 2
+                canvas.drawText(channelNum.toString(), x, y, paint)
+
+                val name = if (tv.name.isNotEmpty()) { tv.name } else { tv.title }
+                imageHelper.loadImage(name, binding.logo, bitmap, tv.logo)
             }
         }
 
-        val epg = tvViewModel.epg.value?.filter { it.beginTime < Utils.getDateTimestamp() }
+        val epg = tvModel.epg.value?.filter { it.beginTime < Utils.getDateTimestamp() }
         if (!epg.isNullOrEmpty()) {
             binding.desc.text = epg.last().title
         } else {
-            binding.desc.text = ""
+            binding.desc.text = "精彩節目"
         }
 
         handler.removeCallbacks(removeRunnable)

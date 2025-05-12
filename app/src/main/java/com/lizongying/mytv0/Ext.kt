@@ -49,7 +49,7 @@ val Context.appVersionCode: Long
  * Return the version name of the app which is defined in build.gradle.
  * eg:1.0.0
  */
-val Context.appVersionName: String get() = packageInfo.versionName
+val Context.appVersionName: String get() = packageInfo.versionName!!
 
 val Context.appSignature: String
     get() {
@@ -94,4 +94,10 @@ fun Int.getString(): String {
 
 fun Int.showToast(duration: Int = Toast.LENGTH_SHORT) {
     this.getString().showToast(duration)
+}
+
+fun String.md5(): String {
+    val md = MessageDigest.getInstance("MD5")
+    val digest = md.digest(this.toByteArray())
+    return digest.joinToString("") { "%02x".format(it) }
 }

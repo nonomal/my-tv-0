@@ -1,28 +1,64 @@
 package com.lizongying.mytv0.models
 
+import android.util.Log
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.ViewModel
+import com.lizongying.mytv0.SP
 
-class TVListModel(private val name: String, private val index: Int) : ViewModel() {
+class TVListModel(private val name: String, private val groupIndex: Int) : ViewModel() {
+    var version = 0
+
+    private val _removed = MutableLiveData<Pair<Int, Int>>()
+    val removed: LiveData<Pair<Int, Int>>
+        get() = _removed
+
+    private val _added = MutableLiveData<Pair<Int, Int>>()
+    val added: LiveData<Pair<Int, Int>>
+        get() = _added
+
+    private val _changed = MutableLiveData<Pair<Int, Int>>()
+    val changed: LiveData<Pair<Int, Int>>
+        get() = _changed
+
     fun getName(): String {
         return name
     }
 
-    fun getIndex(): Int {
-        return index
+    // position in tvGroup. No filters
+    fun getGroupIndex(): Int {
+        return groupIndex
     }
 
-    private val _tvListModel = MutableLiveData<List<TVModel>>()
-    val tvListModel: LiveData<List<TVModel>>
-        get() = _tvListModel
+    private val _tvList = MutableLiveData<List<TVModel>>()
+    val tvList: LiveData<List<TVModel>>
+        get() = _tvList
+    private val tvListValue: List<TVModel>
+        get() = _tvList.value ?: emptyList()
 
     private val _position = MutableLiveData<Int>()
     val position: LiveData<Int>
         get() = _position
+    val positionValue: Int
+        get() = _position.value ?: 0
 
     fun setPosition(position: Int) {
         _position.value = position
+    }
+
+    private val _positionPlaying = MutableLiveData<Int>()
+    val positionPlaying: LiveData<Int>
+        get() = _positionPlaying
+    val positionPlayingValue: Int
+        get() = _positionPlaying.value ?: 0
+
+    fun setPositionPlaying(position: Int) {
+        _positionPlaying.value = position
+        SP.position = position
+    }
+
+    fun setPositionPlaying() {
+        setPositionPlaying(positionValue)
     }
 
     private val _change = MutableLiveData<Boolean>()
@@ -33,77 +69,107 @@ class TVListModel(private val name: String, private val index: Int) : ViewModel(
         _change.value = true
     }
 
-    fun setTVListModel(tvListModel: List<TVModel>) {
-        _tvListModel.value = tvListModel
+    fun setTVListModel(tvList: List<TVModel>) {
+        _tvList.value = tvList
     }
 
     fun addTVModel(tvModel: TVModel) {
-        if (_tvListModel.value == null) {
-            _tvListModel.value = mutableListOf(tvModel)
-            return
+        _tvList.value = tvListValue.toMutableList().apply {
+            add(tvModel)
         }
 
-        val newList = _tvListModel.value!!.toMutableList()
-        newList.add(tvModel)
-        _tvListModel.value = newList
+        _added.value = Pair(tvListValue.size - 1, version)
+        version++
     }
 
     fun removeTVModel(id: Int) {
-        if (_tvListModel.value == null) {
+        if (tvListValue.isEmpty()) {
             return
         }
-        val newList = _tvListModel.value!!.toMutableList()
-        val iterator = newList.iterator()
-        while (iterator.hasNext()) {
-            if (iterator.next().tv.id == id) {
-                iterator.remove()
+
+        val index = tvListValue.indexOfFirst { it.tv.id == id }
+        if (index != -1) {
+            _tvList.value = tvListValue.toMutableList().apply {
+                removeAt(index)
             }
+
+            _removed.value = Pair(index, version)
+            version++
         }
-        _tvListModel.value = newList
     }
 
     fun replaceTVModel(tvModel: TVModel) {
-        if (_tvListModel.value == null) {
-            _tvListModel.value = mutableListOf(tvModel)
-            return
+        if (_tvList.value == null) {
+            _tvList.value = mutableListOf(tvModel)
         }
 
-        val newList = _tvListModel.value!!.toMutableList()
-        var exists = false
-        val iterator = newList.iterator()
-        while (iterator.hasNext()) {
-            if (iterator.next().tv.id == tvModel.tv.id) {
-                exists = true
+        val index = tvListValue.indexOfFirst { it.tv.id == tvModel.tv.id }
+        if (index == -1) {
+            _tvList.value = tvListValue.toMutableList().apply {
+                add(tvModel)
             }
-        }
-        if (!exists) {
-            newList.add(tvModel)
-            _tvListModel.value = newList
-        }
-    }
 
-    fun clear() {
-        _tvListModel.value = mutableListOf()
-        setPosition(0)
+            _added.value = Pair(tvListValue.size - 1, version)
+            version++
+        }
     }
 
     fun getTVModel(): TVModel? {
-        return getTVModel(position.value as Int)
+        return getTVModel(positionValue)
     }
 
     fun getTVModel(idx: Int): TVModel? {
-        return _tvListModel.value?.get(idx)
+        if (idx < 0 || idx >= size()) {
+            return null
+        }
+
+        setPosition(idx)
+        return tvListValue[idx]
+    }
+
+    fun getCurrent(): TVModel? {
+        if (positionValue < 0 || positionValue >= size()) {
+            return getTVModel(0)
+        }
+
+        return getTVModel(positionValue)
+    }
+
+    fun getPrev(): TVModel? {
+        if (size() == 0) {
+            return null
+        }
+
+        val p = (size() + positionPlayingValue - 1) % size()
+        setPositionPlaying(p)
+        setPosition(p)
+        return tvListValue[p]
+    }
+
+    fun getNext(): TVModel? {
+        if (size() == 0) {
+            return null
+        }
+
+        val p = (positionPlayingValue + 1) % size()
+        setPositionPlaying(p)
+        setPosition(p)
+        return tvListValue[p]
+    }
+
+    fun initTVList() {
+        _tvList.value = mutableListOf()
     }
 
     init {
-        _position.value = 0
+        _position.value = SP.position
     }
 
     fun size(): Int {
-        if (_tvListModel.value == null) {
-            return 0
-        }
+        return tvListValue.size
+    }
 
-        return _tvListModel.value!!.size
+    companion object {
+        const val TAG = "TVListModel"
     }
 }
